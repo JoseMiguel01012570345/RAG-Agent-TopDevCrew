@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   Answer,
@@ -40,13 +40,17 @@ export function App() {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [docsOpen, setDocsOpen] = useState(false);
   const [question, setQuestion] = useState("");
+  const [editFrom, setEditFrom] = useState<{ communityId: string; turnId: string } | null>(null);
   const [histories, setHistories] = useState<Record<string, Turn[]>>({});
   const [citation, setCitation] = useState<Citation | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const transcriptEnd = useRef<HTMLDivElement>(null);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
 
   const selected = communities.find((community) => community.id === selectedId) ?? null;
+  const citationShown = useRef<Citation | null>(null);
+  if (citation) citationShown.current = citation;
   const turns = selectedId ? (histories[selectedId] ?? []) : [];
   const waiting = turns.some((turn) => !turn.answer && !turn.error);
   const ingesting = documents.some((doc) => doc.status === "pending" || doc.status === "processing");
@@ -118,6 +122,7 @@ export function App() {
     setUserId(next);
     setSelectedId(null);
     setHistories({});
+    setEditFrom(null);
     setCitation(null);
     setDocsOpen(false);
     setBanner(null);
@@ -174,14 +179,6 @@ export function App() {
     }
   }
 
-  function clearHistory() {
-    if (!selectedId || turns.length === 0) return;
-    const confirmed = window.confirm("¿Borrar las preguntas y respuestas de esta comunidad?");
-    if (!confirmed) return;
-    setHistories((current) => ({ ...current, [selectedId]: [] }));
-    setCitation(null);
-  }
-
   async function removeDocument(doc: DocumentRow) {
     if (!selectedId) return;
     const confirmed = window.confirm(
@@ -218,13 +215,52 @@ export function App() {
     }
   }
 
+  function editTurn(turnId: string) {
+    if (!selectedId || waiting) return;
+    const turn = turns.find((item) => item.id === turnId);
+    if (!turn) return;
+    setEditFrom({ communityId: selectedId, turnId });
+    setQuestion(turn.question);
+    questionRef.current?.focus();
+  }
+
+  async function retryTurn(turnId: string) {
+    if (!selectedId || waiting) return;
+    const communityId = selectedId;
+    const turn = turns.find((item) => item.id === turnId);
+    if (!turn) return;
+    updateTurns(communityId, (current) =>
+      current.map((item) =>
+        item.id === turnId ? { id: item.id, question: item.question } : item,
+      ),
+    );
+    setBanner(null);
+    try {
+      const answer = await askQuestion(userId, communityId, turn.question);
+      updateTurns(communityId, (current) =>
+        current.map((item) => (item.id === turnId ? { ...item, answer } : item)),
+      );
+    } catch (error) {
+      const text = messageOf(error);
+      updateTurns(communityId, (current) =>
+        current.map((item) => (item.id === turnId ? { ...item, error: text } : item)),
+      );
+    }
+  }
+
   async function onAsk(event: FormEvent) {
     event.preventDefault();
     if (!selectedId || waiting || question.trim().length < 3) return;
     const communityId = selectedId;
     const asked = question.trim();
     const id = crypto.randomUUID();
-    updateTurns(communityId, (current) => [...current, { id, question: asked }]);
+    const cutId = editFrom?.communityId === communityId ? editFrom.turnId : null;
+    updateTurns(communityId, (current) => {
+      const cut = cutId ? current.findIndex((turn) => turn.id === cutId) : -1;
+      const base = cut >= 0 ? current.slice(0, cut) : current;
+      return [...base, { id, question: asked }];
+    });
+    setEditFrom(null);
     setQuestion("");
     setBanner(null);
     try {
@@ -275,8 +311,8 @@ export function App() {
             {communities.length === 0 ? (
               <li className="muted empty-side">Crea una comunidad para empezar.</li>
             ) : null}
-            {communities.map((community) => (
-              <li key={community.id}>
+            {communities.map((community, index) => (
+              <li key={community.id} style={{ animationDelay: `${index * 55}ms` }}>
                 <button
                   type="button"
                   className={community.id === selectedId ? "community active" : "community"}
@@ -285,6 +321,7 @@ export function App() {
                     setCitation(null);
                     setDocsOpen(false);
                     setQuestion("");
+                    setEditFrom(null);
                   }}
                 >
                   <span>{community.name}</span>
@@ -297,7 +334,7 @@ export function App() {
 
         <main className="chat-screen">
           {selected ? (
-            <>
+            <div className="chat-stage" key={selected.id}>
               <header className="chat-head">
                 <div>
                   <h2>{selected.name}</h2>
@@ -306,20 +343,8 @@ export function App() {
                   </p>
                 </div>
                 <div className="chat-actions">
-                  <button
-                    type="button"
-                    className={docsOpen ? "ghost active-toggle" : "ghost"}
-                    onClick={() => setDocsOpen((open) => !open)}
-                  >
+                  <button type="button" className="ghost" onClick={() => setDocsOpen(true)}>
                     Documentos{documents.length > 0 ? ` (${documents.length})` : ""}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={turns.length === 0}
-                    onClick={clearHistory}
-                  >
-                    Limpiar historial
                   </button>
                   <button
                     type="button"
@@ -332,51 +357,6 @@ export function App() {
                 </div>
               </header>
 
-              {docsOpen ? (
-                <section className="docs-drawer" aria-label="Documentos de la comunidad">
-                  <div className="docs-toolbar">
-                    <p className="muted">Estos archivos son la evidencia del chat.</p>
-                    <label className="upload">
-                      Subir PDF o texto
-                      <input
-                        type="file"
-                        accept=".pdf,.txt,application/pdf,text/plain"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          void onUpload(file);
-                          event.target.value = "";
-                        }}
-                        disabled={busy}
-                      />
-                    </label>
-                  </div>
-                  {documents.length === 0 ? (
-                    <p className="muted">Todavía no hay documentos.</p>
-                  ) : (
-                    <ul className="doc-list">
-                      {documents.map((doc) => (
-                        <li key={doc.id}>
-                          <div>
-                            <strong>{doc.filename}</strong>
-                            <span className={`pill pill-${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
-                            {doc.page_count ? <small className="muted">{doc.page_count} pág.</small> : null}
-                            {doc.error_message ? <small className="error-text">{doc.error_message}</small> : null}
-                          </div>
-                          <button
-                            type="button"
-                            className="danger"
-                            disabled={busy}
-                            onClick={() => void removeDocument(doc)}
-                          >
-                            Eliminar
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              ) : null}
-
               <div className="transcript" aria-live="polite">
                 {turns.length === 0 ? (
                   <div className="chat-empty">
@@ -386,9 +366,44 @@ export function App() {
                 ) : null}
                 {turns.map((turn) => (
                   <article key={turn.id} className="exchange">
-                    <p className="bubble bubble-user">{turn.question}</p>
+                    <p
+                      className={
+                        editFrom?.communityId === selected.id && editFrom.turnId === turn.id
+                          ? "bubble bubble-user editing"
+                          : "bubble bubble-user"
+                      }
+                    >
+                      {turn.question}
+                    </p>
+                    {turn.answer || turn.error ? (
+                      <div className="turn-actions">
+                        <button
+                          type="button"
+                          className="mini"
+                          disabled={waiting}
+                          onClick={() => void retryTurn(turn.id)}
+                        >
+                          Reintentar
+                        </button>
+                        <button
+                          type="button"
+                          className="mini"
+                          disabled={waiting}
+                          onClick={() => editTurn(turn.id)}
+                        >
+                          Editar
+                        </button>
+                      </div>
+                    ) : null}
                     {!turn.answer && !turn.error ? (
-                      <p className="bubble bubble-bot pending">Consultando los documentos…</p>
+                      <p className="bubble bubble-bot pending">
+                        Consultando
+                        <span className="dots" aria-hidden="true">
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      </p>
                     ) : null}
                     {turn.error ? <p className="bubble bubble-bot error-text">{turn.error}</p> : null}
                     {turn.answer ? <AnswerCard answer={turn.answer} onOpen={setCitation} /> : null}
@@ -403,6 +418,7 @@ export function App() {
                 </label>
                 <textarea
                   id="question"
+                  ref={questionRef}
                   value={question}
                   onChange={(event) => setQuestion(event.target.value)}
                   onKeyDown={(event) => {
@@ -426,7 +442,7 @@ export function App() {
                   </svg>
                 </button>
               </form>
-            </>
+            </div>
           ) : (
             <section className="chat-empty welcome">
               <h2>Elige una comunidad</h2>
@@ -436,38 +452,98 @@ export function App() {
         </main>
       </div>
 
-      {creating ? (
-        <div className="modal-backdrop" onClick={() => setCreating(false)} role="presentation">
-          <form
-            className="modal"
-            onSubmit={addCommunity}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2>Nueva comunidad</h2>
-            <p className="muted">Aparece en la lista de la izquierda y abre su propio chat.</p>
-            <label htmlFor="community-name">Nombre</label>
-            <input
-              id="community-name"
-              value={communityName}
-              onChange={(event) => setCommunityName(event.target.value)}
-              placeholder="Residencial Alameda"
-              maxLength={200}
-              autoFocus
-            />
-            <div className="modal-actions">
-              <button type="button" className="ghost" onClick={() => setCreating(false)}>
-                Cancelar
-              </button>
-              <button type="submit" disabled={busy || communityName.trim().length === 0}>
-                Crear
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
+      <Presence open={creating} onClose={() => setCreating(false)} backdropClass="modal-backdrop">
+        <form
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-title"
+          onSubmit={addCommunity}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <h2 id="create-title">Nueva comunidad</h2>
+          <p className="muted">Aparece en la lista de la izquierda y abre su propio chat.</p>
+          <label htmlFor="community-name">Nombre</label>
+          <input
+            id="community-name"
+            value={communityName}
+            onChange={(event) => setCommunityName(event.target.value)}
+            placeholder="Residencial Alameda"
+            maxLength={200}
+            autoFocus
+          />
+          <div className="modal-actions">
+            <button type="button" className="ghost" onClick={() => setCreating(false)}>
+              Cancelar
+            </button>
+            <button type="submit" disabled={busy || communityName.trim().length === 0}>
+              Crear
+            </button>
+          </div>
+        </form>
+      </Presence>
 
-      {citation ? (
-        <div className="drawer-backdrop" onClick={() => setCitation(null)} role="presentation">
+      <Presence open={docsOpen} onClose={() => setDocsOpen(false)} backdropClass="modal-backdrop">
+        <section
+          className="modal modal-docs"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Documentos de la comunidad"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="docs-toolbar">
+            <div>
+              <h2>Documentos</h2>
+              <p className="muted">Estos archivos son la evidencia del chat.</p>
+            </div>
+            <label className="upload">
+              Subir PDF o texto
+              <input
+                type="file"
+                accept=".pdf,.txt,application/pdf,text/plain"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  void onUpload(file);
+                  event.target.value = "";
+                }}
+                disabled={busy}
+              />
+            </label>
+          </div>
+          {documents.length === 0 ? (
+            <p className="muted">Todavía no hay documentos.</p>
+          ) : (
+            <ul className="doc-list">
+              {documents.map((doc, index) => (
+                <li key={doc.id} style={{ animationDelay: `${index * 60}ms` }}>
+                  <div>
+                    <strong>{doc.filename}</strong>
+                    <span className={`pill pill-${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
+                    {doc.page_count ? <small className="muted">{doc.page_count} pág.</small> : null}
+                    {doc.error_message ? <small className="error-text">{doc.error_message}</small> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => void removeDocument(doc)}
+                  >
+                    Eliminar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="modal-actions">
+            <button type="button" className="ghost" onClick={() => setDocsOpen(false)}>
+              Cerrar
+            </button>
+          </div>
+        </section>
+      </Presence>
+
+      <Presence open={citation !== null} onClose={() => setCitation(null)} backdropClass="drawer-backdrop">
+        {citationShown.current ? (
           <aside
             className="drawer"
             role="dialog"
@@ -476,15 +552,53 @@ export function App() {
             onClick={(event) => event.stopPropagation()}
           >
             <p className="eyebrow">Fragmento fuente</p>
-            <h2 id="citation-title">{citation.document_name}</h2>
-            <p className="page">Página {citation.page}</p>
-            <blockquote>{citation.fragment}</blockquote>
+            <h2 id="citation-title">{citationShown.current.document_name}</h2>
+            <p className="page">Página {citationShown.current.page}</p>
+            <blockquote>{citationShown.current.fragment}</blockquote>
             <button type="button" onClick={() => setCitation(null)}>
               Cerrar
             </button>
           </aside>
-        </div>
-      ) : null}
+        ) : null}
+      </Presence>
+    </div>
+  );
+}
+
+function usePresence(open: boolean, ms = 420) {
+  const [mounted, setMounted] = useState(open);
+  const [phase, setPhase] = useState<"in" | "out">(open ? "in" : "out");
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setPhase("in");
+      return;
+    }
+    setPhase("out");
+    const timer = window.setTimeout(() => setMounted(false), ms);
+    return () => window.clearTimeout(timer);
+  }, [open, ms]);
+
+  return { mounted, phase };
+}
+
+function Presence({
+  open,
+  onClose,
+  backdropClass,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  backdropClass: string;
+  children: ReactNode;
+}) {
+  const { mounted, phase } = usePresence(open);
+  if (!mounted) return null;
+  return (
+    <div className={`${backdropClass} ${phase}`} onClick={onClose} role="presentation">
+      {children}
     </div>
   );
 }
@@ -503,7 +617,7 @@ function AnswerCard({ answer, onOpen }: { answer: Answer; onOpen: (citation: Cit
       {answer.citations.length > 0 ? (
         <ul className="citations">
           {answer.citations.map((item, index) => (
-            <li key={`${item.document_id}-${item.page}-${index}`}>
+            <li key={`${item.document_id}-${item.page}-${index}`} style={{ animationDelay: `${index * 70}ms` }}>
               <button type="button" onClick={() => onOpen(item)}>
                 {item.document_name} · p. {item.page}
               </button>
