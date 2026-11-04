@@ -1,0 +1,37 @@
+{
+  "documents": [
+    {"filename": "acta-marzo.txt"},
+    {"filename": "reglamento.txt"},
+    {"filename": "acta-portal-2010.txt"},
+    {"filename": "acta-portal-2024.txt"}
+  ],
+  "cases": [
+    {
+      "id": "ascensor",
+      "question": "¿Qué se aprobó sobre la reparación del ascensor en la asamblea de marzo?",
+      "sufficient_evidence": true,
+      "expected_citations": [{"filename": "acta-marzo.txt", "page": 1}]
+    },
+    {
+      "id": "mascotas",
+      "question": "¿Qué dice el reglamento sobre mascotas en zonas comunes?",
+      "sufficient_evidence": true,
+      "expected_citations": [{"filename": "reglamento.txt", "page": 1}]
+    },
+    {
+      "id": "portal",
+      "question": "¿Se autorizan obras en el portal?",
+      "sufficient_evidence": true,
+      "expected_citations": [
+        {"filename": "acta-portal-2010.txt", "page": 1},
+        {"filename": "acta-portal-2024.txt", "page": 1}
+      ]
+    },
+    {
+      "id": "salon",
+      "question": "¿Cuál es el aforo máximo del salón social?",
+      "sufficient_evidence": false,
+      "expected_citations": []
+    }
+  ]
+}
