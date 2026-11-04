@@ -41,7 +41,7 @@ Toda la SQL lleva `community_id` y `documents.status = 'ready'`.
 
 ## Abstracción del modelo
 
-`LLM_PROVIDER` vale `fake`, `gemini`, `openai` o `groq`. `EMBEDDING_PROVIDER` vale `fake`, `gemini` u `openai`: Groq no tiene un embedding que quepa en la columna de 384 dimensiones, así que con Groq el vector sigue siendo el hash local y la recuperación se apoya en el texto. La interfaz es `complete(system, user)` y `embed(texts)`. LiteLLM solo se importa en los proveedores reales. El falso no abre red: hashea tokens a 384 dimensiones y contesta JSON citando solo fragmentos del prompt que comparten palabras con la pregunta.
+`LLM_PROVIDER` vale `fake` o `groq`. `EMBEDDING_PROVIDER` vale `fake` o `gemini` (Google AI Studio). Groq no tiene un embedding que quepa en la columna de 384 dimensiones, así que el vector sale de Gemini, recortado a 384, y la recuperación sigue apoyándose en el texto. La interfaz es `complete(system, user)` y `embed(texts)`. LiteLLM solo se importa en los proveedores reales. El falso no abre red: hashea tokens a 384 dimensiones y contesta JSON citando solo fragmentos del prompt que comparten palabras con la pregunta.
 
 Los tokens del proveedor falso son una estimación de caracteres / 4, para que la traza tenga el atributo también en local. Con un proveedor real se usan los tokens que devuelve la API.
 
@@ -60,16 +60,3 @@ El system prompt trata el documento como dato no confiable y prohíbe obedecer i
 ## Trazas
 
 El `traceparent` lo propaga la instrumentación de Celery. Hay spans de FastAPI, SQLAlchemy, `rag.ingest`, `rag.retrieve`, `rag.embed`, `rag.llm` y `rag.answer`. En el LLM y en los embeddings quedan modelo, tokens y `faro.latency_ms`. Los logs son JSON e incluyen `trace_id` cuando hay un span activo.
-
-## Cómo usé IA generativa
-
-El esqueleto y buena parte del código los escribí con un agente en Cursor (Grok), a partir del enunciado. No lo dejé tal cual. Corregí o descarté estas propuestas mientras lo revisaba:
-
-- Docling como parser por defecto. Lo cambié a PyMuPDF para que la imagen y el CI no dependan de descargar modelos.
-- Búsqueda solo vectorial. Con el embedding falso y con nombres propios, el texto de Postgres tiene que participar. Por eso la fusión híbrida.
-- Fiarse del JSON del modelo. Añadí la comprobación de que el fragmento citado está dentro del chunk recuperado, y la degradación si no.
-- Tratar la re-subida del mismo hash como un no-op también cuando el documento había fallado. Eso dejaba el fallo pegado. Ahora un `failed` se vuelve a encolar.
-- Una sola dimensión “la que devuelva el proveedor”. El esquema fija 384. Gemini se recorta y OpenAI pide `dimensions=384`, y eso queda escrito en el README para no sorprender en la entrevista.
-- Un esbozo de JWT. No lo implementé a medias: el header y la tabla de membresía son el límite consciente, y los tests cubren que otra persona no lee la comunidad.
-
-El conjunto de evaluación y los tests de timeout, cita inventada y PDF sin texto los usé para comprobar esos cortes, no como adorno.

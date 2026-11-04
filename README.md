@@ -16,21 +16,23 @@ docker compose up --build
 
 El identificador de administrador es simulado. En la interfaz vale `admin.demo` o cualquier valor de letras, números y `._@-`. Viaja en la cabecera `X-User-Id`. Quien crea una comunidad es su único miembro.
 
-Por defecto el LLM y los embeddings son el proveedor falso: no hace falta ninguna clave y las respuestas son deterministas.
+El LLM es [Groq](https://console.groq.com/keys?utm_source=chatgpt.com). Los embeddings son [Google AI Studio](https://aistudio.google.com/api-keys) (Gemini).
 
 ## Variables de entorno
 
-Están en [`.env.example`](.env.example). Compose ya arranca con valores locales. Para Gemini:
+Están en [`.env.example`](.env.example). La clave del LLM se crea en [console.groq.com/keys](https://console.groq.com/keys?utm_source=chatgpt.com). La clave de embeddings se crea en [aistudio.google.com/api-keys](https://aistudio.google.com/api-keys).
 
 ```bash
-LLM_PROVIDER=gemini
+LLM_PROVIDER=groq
+GROQ_API_KEY=tu-clave
+LLM_MODEL=groq/openai/gpt-oss-120b
+
 EMBEDDING_PROVIDER=gemini
 GEMINI_API_KEY=tu-clave
-LLM_MODEL=gemini/gemini-2.0-flash
 EMBEDDING_MODEL=gemini/text-embedding-004
 ```
 
-OpenAI usa `LLM_PROVIDER=openai`, `OPENAI_API_KEY`, `gpt-4o-mini` y `text-embedding-3-small`. Groq solo sustituye el LLM: `LLM_PROVIDER=groq`, `GROQ_API_KEY` y, por defecto, `groq/openai/gpt-oss-120b`. Los embeddings se quedan en `fake`, porque Groq no ofrece un vector de 384 dimensiones; la búsqueda por texto español sigue activa. LiteLLM lee el nombre del modelo. La columna de pgvector es de 384 dimensiones: OpenAI pide esa dimensión y Gemini se recorta a 384. El proveedor falso no sale a la red.
+Groq no ofrece un vector de 384 dimensiones, así que los embeddings salen de Google AI Studio (`text-embedding-004`) y se recortan a 384 para la columna de pgvector. La búsqueda por texto español sigue activa. LiteLLM lee el nombre del modelo. El proveedor falso, usado en los tests, no sale a la red.
 
 ## Desarrollo local, sin reconstruir las imágenes
 
@@ -77,7 +79,7 @@ El conjunto de evaluación está en [`eval/cases.json`](eval/cases.json). Mide s
 - Recuperación híbrida (vector + texto español) y respuestas con citas comprobadas contra los fragmentos.
 - Abstención, un reintento y degradación si el modelo no devuelve JSON válido. Timeout y límite de uso no inventan una respuesta.
 - React con subida, polling del estado y citas que abren el fragmento.
-- Proveedor falso y proveedores Gemini, OpenAI y Groq (solo el LLM) por configuración.
+- LLM en [Groq](https://console.groq.com/keys?utm_source=chatgpt.com) y embeddings en [Google AI Studio](https://aistudio.google.com/api-keys). El proveedor falso cubre los tests sin red.
 - OpenTelemetry desde la petición HTTP hasta Celery, la base y el LLM. Logs JSON con `trace_id`.
 - Tests unitarios, de integración contra Postgres y el conjunto de evaluación. GitHub Actions ejecuta Ruff, Pytest y el build de las imágenes.
 

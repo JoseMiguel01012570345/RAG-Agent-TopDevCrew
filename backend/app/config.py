@@ -11,12 +11,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://faro:faro@localhost:5432/faro"
     redis_url: str = "redis://localhost:6379/0"
-    llm_provider: Literal["fake", "gemini", "openai", "groq"] = "fake"
-    embedding_provider: Literal["fake", "gemini", "openai"] = "fake"
+    llm_provider: Literal["fake", "groq"] = "fake"
+    embedding_provider: Literal["fake", "gemini"] = "fake"
     llm_model: str | None = None
     embedding_model: str | None = None
     gemini_api_key: str | None = None
-    openai_api_key: str | None = None
     groq_api_key: str | None = None
     llm_timeout_seconds: float = 30
     max_upload_bytes: int = 20 * 1024 * 1024

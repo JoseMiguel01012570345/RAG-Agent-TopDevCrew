@@ -114,18 +114,6 @@ def build_llm(settings=None) -> LLMClient:
     settings = settings or get_settings()
     if settings.llm_provider == "fake":
         return FakeLLM(model=settings.llm_model or "fake-answer")
-    if settings.llm_provider == "gemini":
-        return LiteLLMClient(
-            model=settings.llm_model or "gemini/gemini-2.0-flash",
-            timeout=settings.llm_timeout_seconds,
-            api_key=settings.gemini_api_key,
-        )
-    if settings.llm_provider == "openai":
-        return LiteLLMClient(
-            model=settings.llm_model or "gpt-4o-mini",
-            timeout=settings.llm_timeout_seconds,
-            api_key=settings.openai_api_key,
-        )
     if settings.llm_provider == "groq":
         return LiteLLMClient(
             model=settings.llm_model or "groq/openai/gpt-oss-120b",

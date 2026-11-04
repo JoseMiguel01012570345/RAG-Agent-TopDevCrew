@@ -26,7 +26,7 @@ faro-api  POST /communities/{id}/documents
 
 Atributos que importan para costo y tiempo:
 
-- `gen_ai.request.model`: `fake-answer`, `fake-hash-384`, o el modelo de Gemini/OpenAI.
+- `gen_ai.request.model`: `fake-answer`, `fake-hash-384`, o el modelo de Groq o de Google AI Studio.
 - `gen_ai.usage.input_tokens` y `gen_ai.usage.output_tokens`.
 - `faro.latency_ms` en el embed y en el LLM.
 - `faro.community_id`, `rag.chunk_count`, `rag.sufficient_evidence`, `rag.degraded`.
@@ -47,7 +47,7 @@ Ejemplo de span `rag.llm` (proveedor falso, pregunta con una cita válida):
 }
 ```
 
-Con el proveedor falso esos tokens son `len(texto) / 4`, no una factura. Con Gemini u OpenAI el valor sale del `usage` de LiteLLM. La latencia del falso es casi solo CPU; en un proveedor real el mismo atributo concentra la espera de red y es lo primero que miro si una pregunta se va de tiempo.
+Con el proveedor falso esos tokens son `len(texto) / 4`, no una factura. Con Groq o Google AI Studio el valor sale del `usage` de LiteLLM. La latencia del falso es casi solo CPU; en un proveedor real el mismo atributo concentra la espera de red y es lo primero que miro si una pregunta se va de tiempo.
 
 ## Qué aprendí al recorrerla
 

@@ -45,8 +45,7 @@ class FakeEmbedder(Embedder):
 
 
 class LiteLLMEmbedder(Embedder):
-    def __init__(self, provider: str, model: str, timeout: float, api_key: str | None) -> None:
-        self.provider = provider
+    def __init__(self, model: str, timeout: float, api_key: str | None) -> None:
         self.model = model
         self.timeout = timeout
         self.api_key = api_key
@@ -55,16 +54,13 @@ class LiteLLMEmbedder(Embedder):
         import litellm
 
         litellm.telemetry = False
-        kwargs: dict = {
-            "model": self.model,
-            "input": texts,
-            "timeout": self.timeout,
-            "api_key": self.api_key,
-        }
-        if self.provider == "openai":
-            kwargs["dimensions"] = EMBEDDING_DIM
         try:
-            response = litellm.embedding(**kwargs)
+            response = litellm.embedding(
+                model=self.model,
+                input=texts,
+                timeout=self.timeout,
+                api_key=self.api_key,
+            )
         except Exception as exc:
             raise map_provider_exception(exc) from exc
         data = response.data if hasattr(response, "data") else response["data"]
@@ -82,17 +78,9 @@ def build_embedder(settings: Settings | None = None) -> Embedder:
         return FakeEmbedder(model=settings.embedding_model or "fake-hash-384")
     if provider == "gemini":
         return LiteLLMEmbedder(
-            provider=provider,
             model=settings.embedding_model or "gemini/text-embedding-004",
             timeout=settings.llm_timeout_seconds,
             api_key=settings.gemini_api_key,
-        )
-    if provider == "openai":
-        return LiteLLMEmbedder(
-            provider=provider,
-            model=settings.embedding_model or "text-embedding-3-small",
-            timeout=settings.llm_timeout_seconds,
-            api_key=settings.openai_api_key,
         )
     raise ValueError(f"Proveedor de embeddings desconocido: {provider}")
 
