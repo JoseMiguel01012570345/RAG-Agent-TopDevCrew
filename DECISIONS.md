@@ -49,7 +49,7 @@ Los tokens del proveedor falso son una estimación de caracteres / 4, para que l
 
 La tarea de Celery usa `acks_late`, `reject_on_worker_lost` y dos reintentos. Borrar chunks e insertar los nuevos ocurre en la misma transacción: si el proceso muere antes del commit, los chunks anteriores siguen ahí. Errores permanentes (PDF roto, sin texto, demasiadas páginas) marcan `failed` y no se reintentan. Un fallo transitorio reintenta; al agotar los intentos queda `internal_error`.
 
-Volver a subir el mismo archivo no crea otro documento (`community_id` + sha256). Si el anterior está `ready`, se devuelve. Si está `failed`, se reencola. Si no reencolara, un PDF corregible en el parser dejaría el documento muerto para siempre.
+Volver a subir el mismo archivo no crea otro documento mientras siga `pending`, `processing` o `ready` (`community_id` + sha256). Un documento `failed` no se reescribe: otro PDF, aunque también falle, entra como una fila nueva y los dos quedan en la lista. El índice único ignora las filas fallidas para permitirlo.
 
 En la pregunta, una salida que no es JSON o una cita que no es un substring del fragmento recuperado se reintenta una vez. Si vuelve a fallar, la respuesta degradada muestra los fragmentos y lo dice. Un timeout o un 429 se reintenta una vez y, si persiste, el mensaje explica que el proveedor falló y no hay citas inventadas.
 

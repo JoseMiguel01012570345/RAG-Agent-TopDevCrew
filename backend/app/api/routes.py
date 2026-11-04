@@ -1,6 +1,5 @@
 import hashlib
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
@@ -105,34 +104,25 @@ def upload_document(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     digest = hashlib.sha256(payload).hexdigest()
-    existing = db.scalar(
+    active = db.scalar(
         select(Document).where(
             Document.community_id == community_id,
             Document.sha256 == digest,
+            Document.status != "failed",
         )
     )
-    if existing is not None and existing.status != "failed":
-        return existing
+    if active is not None:
+        return active
 
-    if existing is None:
-        document = Document(
-            community_id=community_id,
-            filename=filename,
-            content_type=content_type,
-            sha256=digest,
-            content=payload,
-            status="pending",
-        )
-        db.add(document)
-    else:
-        document = existing
-        document.status = "pending"
-        document.error_code = None
-        document.error_message = None
-        document.filename = filename
-        document.content_type = content_type
-        document.content = payload
-        document.updated_at = datetime.now(UTC)
+    document = Document(
+        community_id=community_id,
+        filename=filename,
+        content_type=content_type,
+        sha256=digest,
+        content=payload,
+        status="pending",
+    )
+    db.add(document)
     db.commit()
     db.refresh(document)
     ingest_document.delay(str(document.id))

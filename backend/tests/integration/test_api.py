@@ -63,10 +63,44 @@ def test_failed_upload_can_be_reingested(client, monkeypatch):
     first = _upload(client, "ana", community_id, "roto.pdf", payload, "application/pdf")
     assert first["status"] == "failed"
     assert first["error_code"] == "corrupt_pdf"
-    second = _upload(client, "ana", community_id, "roto.pdf", payload, "application/pdf")
-    assert second["id"] == first["id"]
+    second = _upload(client, "ana", community_id, "otra-copia.pdf", payload, "application/pdf")
+    assert second["id"] != first["id"]
+    assert second["filename"] == "otra-copia.pdf"
     assert second["status"] == "failed"
-    assert calls == [first["id"], first["id"]]
+    listing = client.get(
+        f"/communities/{community_id}/documents",
+        headers={"X-User-Id": "ana"},
+    )
+    assert {item["id"] for item in listing.json()} == {first["id"], second["id"]}
+    assert calls == [first["id"], second["id"]]
+
+
+def test_distinct_failed_pdfs_stay_in_the_list(client):
+    community_id = _create_community(client, "ana", "Dos fallos")
+    first = _upload(
+        client,
+        "ana",
+        community_id,
+        "acta-a.pdf",
+        b"%PDF-1.4 documento alfa sin estructura",
+        "application/pdf",
+    )
+    second = _upload(
+        client,
+        "ana",
+        community_id,
+        "acta-b.pdf",
+        b"%PDF-1.4 documento beta distinto",
+        "application/pdf",
+    )
+    assert first["status"] == "failed"
+    assert second["status"] == "failed"
+    assert first["id"] != second["id"]
+    listing = client.get(
+        f"/communities/{community_id}/documents",
+        headers={"X-User-Id": "ana"},
+    )
+    assert {item["filename"] for item in listing.json()} == {"acta-a.pdf", "acta-b.pdf"}
 
 
 def test_blank_pdf_fails_with_no_text_layer(client):

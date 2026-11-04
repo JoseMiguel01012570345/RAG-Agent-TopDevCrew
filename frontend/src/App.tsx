@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   Answer,
@@ -35,16 +35,22 @@ export function App() {
   const [userDraft, setUserDraft] = useState(loadUserId);
   const [communities, setCommunities] = useState<Community[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [communityName, setCommunityName] = useState("");
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [docsOpen, setDocsOpen] = useState(false);
   const [question, setQuestion] = useState("");
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [histories, setHistories] = useState<Record<string, Turn[]>>({});
   const [citation, setCitation] = useState<Citation | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const transcriptEnd = useRef<HTMLDivElement>(null);
 
   const selected = communities.find((community) => community.id === selectedId) ?? null;
+  const turns = selectedId ? (histories[selectedId] ?? []) : [];
+  const waiting = turns.some((turn) => !turn.answer && !turn.error);
   const ingesting = documents.some((doc) => doc.status === "pending" || doc.status === "processing");
+  const readyCount = documents.filter((doc) => doc.status === "ready").length;
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +96,17 @@ export function App() {
     };
   }, [selectedId, userId, ingesting]);
 
+  useEffect(() => {
+    transcriptEnd.current?.scrollIntoView({ block: "end" });
+  }, [turns, selectedId]);
+
+  function updateTurns(communityId: string, updater: (current: Turn[]) => Turn[]) {
+    setHistories((current) => ({
+      ...current,
+      [communityId]: updater(current[communityId] ?? []),
+    }));
+  }
+
   function applyUser(event: FormEvent) {
     event.preventDefault();
     const next = userDraft.trim();
@@ -100,8 +117,9 @@ export function App() {
     saveUserId(next);
     setUserId(next);
     setSelectedId(null);
-    setTurns([]);
+    setHistories({});
     setCitation(null);
+    setDocsOpen(false);
     setBanner(null);
   }
 
@@ -116,8 +134,10 @@ export function App() {
       setCommunities((current) => [created, ...current]);
       setSelectedId(created.id);
       setCommunityName("");
-      setTurns([]);
+      setCreating(false);
+      setDocsOpen(true);
       setDocuments([]);
+      setQuestion("");
     } catch (error) {
       setBanner(messageOf(error));
     } finally {
@@ -136,17 +156,30 @@ export function App() {
       await deleteCommunity(userId, community.id);
       const remaining = communities.filter((item) => item.id !== community.id);
       setCommunities(remaining);
+      setHistories((current) => {
+        const next = { ...current };
+        delete next[community.id];
+        return next;
+      });
       if (selectedId === community.id) {
         setSelectedId(remaining[0]?.id ?? null);
-        setTurns([]);
         setDocuments([]);
         setCitation(null);
+        setDocsOpen(false);
       }
     } catch (error) {
       setBanner(messageOf(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  function clearHistory() {
+    if (!selectedId || turns.length === 0) return;
+    const confirmed = window.confirm("¿Borrar las preguntas y respuestas de esta comunidad?");
+    if (!confirmed) return;
+    setHistories((current) => ({ ...current, [selectedId]: [] }));
+    setCitation(null);
   }
 
   async function removeDocument(doc: DocumentRow) {
@@ -187,30 +220,38 @@ export function App() {
 
   async function onAsk(event: FormEvent) {
     event.preventDefault();
-    if (!selectedId || question.trim().length < 3) return;
+    if (!selectedId || waiting || question.trim().length < 3) return;
+    const communityId = selectedId;
     const asked = question.trim();
     const id = crypto.randomUUID();
-    setTurns((current) => [{ id, question: asked }, ...current]);
+    updateTurns(communityId, (current) => [...current, { id, question: asked }]);
     setQuestion("");
     setBanner(null);
     try {
-      const answer = await askQuestion(userId, selectedId, asked);
-      setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer } : turn)));
+      const answer = await askQuestion(userId, communityId, asked);
+      updateTurns(communityId, (current) =>
+        current.map((turn) => (turn.id === id ? { ...turn, answer } : turn)),
+      );
     } catch (error) {
       const text = messageOf(error);
-      setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, error: text } : turn)));
+      updateTurns(communityId, (current) =>
+        current.map((turn) => (turn.id === id ? { ...turn, error: text } : turn)),
+      );
     }
   }
 
   return (
     <div className="app">
       <header className="topbar">
-        <div>
+        <div className="brand">
           <p className="eyebrow">Faro Administraciones</p>
-          <h1>Mesa de documentos</h1>
+          <h1>Chat de actas</h1>
         </div>
+        <button type="button" onClick={() => setCreating(true)}>
+          Nueva comunidad
+        </button>
         <form className="user-form" onSubmit={applyUser}>
-          <label htmlFor="user-id">Administrador simulado</label>
+          <label htmlFor="user-id">Administrador</label>
           <div>
             <input
               id="user-id"
@@ -218,7 +259,9 @@ export function App() {
               onChange={(event) => setUserDraft(event.target.value)}
               autoComplete="off"
             />
-            <button type="submit">Usar</button>
+            <button type="submit" className="ghost">
+              Usar
+            </button>
           </div>
         </form>
       </header>
@@ -227,21 +270,11 @@ export function App() {
 
       <div className="shell">
         <aside className="sidebar">
-          <form onSubmit={addCommunity} className="stack">
-            <label htmlFor="community-name">Nueva comunidad</label>
-            <input
-              id="community-name"
-              value={communityName}
-              onChange={(event) => setCommunityName(event.target.value)}
-              placeholder="Residencial Alameda"
-              maxLength={200}
-            />
-            <button type="submit" disabled={busy || communityName.trim().length === 0}>
-              Crear
-            </button>
-          </form>
+          <p className="side-label">Comunidades</p>
           <ul className="community-list">
-            {communities.length === 0 ? <li className="muted">Todavía no hay comunidades.</li> : null}
+            {communities.length === 0 ? (
+              <li className="muted empty-side">Crea una comunidad para empezar.</li>
+            ) : null}
             {communities.map((community) => (
               <li key={community.id}>
                 <button
@@ -249,8 +282,9 @@ export function App() {
                   className={community.id === selectedId ? "community active" : "community"}
                   onClick={() => {
                     setSelectedId(community.id);
-                    setTurns([]);
                     setCitation(null);
+                    setDocsOpen(false);
+                    setQuestion("");
                   }}
                 >
                   <span>{community.name}</span>
@@ -261,24 +295,47 @@ export function App() {
           </ul>
         </aside>
 
-        <main className="workspace">
+        <main className="chat-screen">
           {selected ? (
             <>
-              <section className="panel">
-                <div className="panel-head">
-                  <div>
-                    <p className="eyebrow">Comunidad</p>
-                    <h2>{selected.name}</h2>
-                  </div>
-                  <div className="panel-actions">
-                    <button
-                      type="button"
-                      className="danger"
-                      disabled={busy}
-                      onClick={() => void removeCommunity(selected)}
-                    >
-                      Eliminar comunidad
-                    </button>
+              <header className="chat-head">
+                <div>
+                  <h2>{selected.name}</h2>
+                  <p className="muted">
+                    {readyCount === 1 ? "1 documento listo" : `${readyCount} documentos listos`}
+                  </p>
+                </div>
+                <div className="chat-actions">
+                  <button
+                    type="button"
+                    className={docsOpen ? "ghost active-toggle" : "ghost"}
+                    onClick={() => setDocsOpen((open) => !open)}
+                  >
+                    Documentos{documents.length > 0 ? ` (${documents.length})` : ""}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={turns.length === 0}
+                    onClick={clearHistory}
+                  >
+                    Limpiar historial
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => void removeCommunity(selected)}
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </header>
+
+              {docsOpen ? (
+                <section className="docs-drawer" aria-label="Documentos de la comunidad">
+                  <div className="docs-toolbar">
+                    <p className="muted">Estos archivos son la evidencia del chat.</p>
                     <label className="upload">
                       Subir PDF o texto
                       <input
@@ -293,35 +350,18 @@ export function App() {
                       />
                     </label>
                   </div>
-                </div>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Documento</th>
-                      <th>Estado</th>
-                      <th>Páginas</th>
-                      <th className="sr-only">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {documents.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="muted">
-                          Sube un acta, un reglamento o un .txt para indexarlo.
-                        </td>
-                      </tr>
-                    ) : null}
-                    {documents.map((doc) => (
-                      <tr key={doc.id}>
-                        <td>
-                          <strong>{doc.filename}</strong>
-                          {doc.error_message ? <small className="error-text">{doc.error_message}</small> : null}
-                        </td>
-                        <td>
-                          <span className={`pill pill-${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
-                        </td>
-                        <td>{doc.page_count ?? "—"}</td>
-                        <td>
+                  {documents.length === 0 ? (
+                    <p className="muted">Todavía no hay documentos.</p>
+                  ) : (
+                    <ul className="doc-list">
+                      {documents.map((doc) => (
+                        <li key={doc.id}>
+                          <div>
+                            <strong>{doc.filename}</strong>
+                            <span className={`pill pill-${doc.status}`}>{STATUS_LABEL[doc.status]}</span>
+                            {doc.page_count ? <small className="muted">{doc.page_count} pág.</small> : null}
+                            {doc.error_message ? <small className="error-text">{doc.error_message}</small> : null}
+                          </div>
                           <button
                             type="button"
                             className="danger"
@@ -330,58 +370,101 @@ export function App() {
                           >
                             Eliminar
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              ) : null}
 
-              <section className="panel chat">
-                <div className="panel-head">
-                  <div>
-                    <p className="eyebrow">Consulta</p>
-                    <h2>Pregunta con cita</h2>
+              <div className="transcript" aria-live="polite">
+                {turns.length === 0 ? (
+                  <div className="chat-empty">
+                    <h3>Pregunta sobre {selected.name}</h3>
+                    <p>La respuesta cita el documento, la página y el fragmento. Si no hay evidencia, el asistente se abstiene.</p>
                   </div>
-                </div>
-                <form onSubmit={onAsk} className="ask">
-                  <label htmlFor="question" className="sr-only">
-                    Pregunta
-                  </label>
-                  <textarea
-                    id="question"
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="¿Qué se aprobó sobre la reparación del ascensor?"
-                    rows={3}
-                  />
-                  <button type="submit" disabled={question.trim().length < 3}>
-                    Preguntar
-                  </button>
-                </form>
-                <div className="turns">
-                  {turns.length === 0 ? (
-                    <p className="muted">Las respuestas salen con documento, página y fragmento.</p>
-                  ) : null}
-                  {turns.map((turn) => (
-                    <article key={turn.id} className="turn">
-                      <p className="question">{turn.question}</p>
-                      {!turn.answer && !turn.error ? <p className="muted">Consultando…</p> : null}
-                      {turn.error ? <p className="error-text">{turn.error}</p> : null}
-                      {turn.answer ? <AnswerCard answer={turn.answer} onOpen={setCitation} /> : null}
-                    </article>
-                  ))}
-                </div>
-              </section>
+                ) : null}
+                {turns.map((turn) => (
+                  <article key={turn.id} className="exchange">
+                    <p className="bubble bubble-user">{turn.question}</p>
+                    {!turn.answer && !turn.error ? (
+                      <p className="bubble bubble-bot pending">Consultando los documentos…</p>
+                    ) : null}
+                    {turn.error ? <p className="bubble bubble-bot error-text">{turn.error}</p> : null}
+                    {turn.answer ? <AnswerCard answer={turn.answer} onOpen={setCitation} /> : null}
+                  </article>
+                ))}
+                <div ref={transcriptEnd} />
+              </div>
+
+              <form className="composer" onSubmit={onAsk}>
+                <label htmlFor="question" className="sr-only">
+                  Pregunta
+                </label>
+                <textarea
+                  id="question"
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="Escribe una pregunta sobre esta comunidad"
+                  rows={2}
+                  disabled={waiting}
+                />
+                <button
+                  type="submit"
+                  className="send"
+                  aria-label="Enviar"
+                  disabled={waiting || question.trim().length < 3}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" />
+                  </svg>
+                </button>
+              </form>
             </>
           ) : (
-            <section className="panel empty">
-              <h2>Elige o crea una comunidad</h2>
-              <p>Cada comunidad aísla sus documentos. Otro administrador no los ve.</p>
+            <section className="chat-empty welcome">
+              <h2>Elige una comunidad</h2>
+              <p>La lista de la izquierda abre su chat. Nueva comunidad está siempre arriba.</p>
             </section>
           )}
         </main>
       </div>
+
+      {creating ? (
+        <div className="modal-backdrop" onClick={() => setCreating(false)} role="presentation">
+          <form
+            className="modal"
+            onSubmit={addCommunity}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Nueva comunidad</h2>
+            <p className="muted">Aparece en la lista de la izquierda y abre su propio chat.</p>
+            <label htmlFor="community-name">Nombre</label>
+            <input
+              id="community-name"
+              value={communityName}
+              onChange={(event) => setCommunityName(event.target.value)}
+              placeholder="Residencial Alameda"
+              maxLength={200}
+              autoFocus
+            />
+            <div className="modal-actions">
+              <button type="button" className="ghost" onClick={() => setCreating(false)}>
+                Cancelar
+              </button>
+              <button type="submit" disabled={busy || communityName.trim().length === 0}>
+                Crear
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {citation ? (
         <div className="drawer-backdrop" onClick={() => setCitation(null)} role="presentation">
@@ -414,7 +497,7 @@ function AnswerCard({ answer, onOpen }: { answer: Answer; onOpen: (citation: Cit
       ? "Respuesta degradada"
       : "Evidencia citada";
   return (
-    <div className={`answer answer-${tone}`}>
+    <div className={`bubble bubble-bot answer answer-${tone}`}>
       <p className="flag">{label}</p>
       <p className="answer-text">{answer.answer}</p>
       {answer.citations.length > 0 ? (
